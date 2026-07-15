@@ -6,7 +6,8 @@
             "version": "20"
         }
     },
-    "postCreateCommand": "pip3 install --user -r requirements.txt && sudo npm install -g @anthropic-ai/claude-code",
+    "postCreateCommand": "pip3 install --user -r requirements.txt",
+    "postStartCommand": "sudo npm install -g @anthropic-ai/claude-code",
     "customizations": {
         "extensions": [
             "ms-python.python",
