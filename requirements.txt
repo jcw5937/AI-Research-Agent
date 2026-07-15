@@ -1,0 +1,11 @@
+langgraph
+langchain-anthropic
+langchain-openai
+langchain-community
+langchain-core
+arxiv
+python-docx
+httpx
+beautifulsoup4
+python-dotenv
+tavily-python
