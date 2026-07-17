@@ -3,6 +3,7 @@ langchain-anthropic
 langchain-openai
 langchain-community
 langchain-core
+langgraph-checkpoint-sqlite
 arxiv
 python-docx
 httpx
