@@ -26,7 +26,10 @@ def show_plan(plan: list[dict]) -> None:
     print("RESEARCH PLAN")
     _print_rule("=")
     for i, layer in enumerate(plan, start=1):
+        categories = layer.get("arxiv_categories") or []
+        cat_display = ", ".join(categories) if categories else "unscoped"
         print(f"\n[{i}] {layer.get('layer_name', 'Untitled Layer')}  (search: {layer.get('search_type', '?')})")
+        print(f"    arxiv categories: {cat_display}")
         print(f"    {layer.get('rationale', '')}")
     _print_rule("=")
     print()

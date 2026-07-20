@@ -42,15 +42,19 @@ def tavily_search(query: str, max_results: int = 5) -> list[dict]:
         return [{"error": f"tavily_search failed: {exc}"}]
 
 
-AI_CATEGORIES = ["cs.AI", "cs.CL", "cs.LG", "cs.MA", "cs.NE"]
+def arxiv_search(query: str, max_results: int = 5, categories: list[str] | None = None) -> list[dict]:
+    """Search arXiv, optionally scoped to the given category codes (e.g. ['cs.AI', 'cs.CL']).
 
-
-def arxiv_search(query: str, max_results: int = 5) -> list[dict]:
-    """Search arXiv, scoped to AI/ML categories. Returns [{'title', 'url', 'authors', 'abstract', 'published'}, ...]."""
+    If categories is empty/None, the query is left unscoped. Returns
+    [{'title', 'url', 'authors', 'abstract', 'published'}, ...].
+    """
     try:
         client = arxiv.Client()
-        category_filter = " OR ".join(f"cat:{cat}" for cat in AI_CATEGORIES)
-        scoped_query = f"({category_filter}) AND all:{query}"
+        if categories:
+            category_filter = " OR ".join(f"cat:{cat}" for cat in categories)
+            scoped_query = f"({category_filter}) AND all:{query}"
+        else:
+            scoped_query = query
         search = arxiv.Search(
             query=scoped_query,
             max_results=max_results,

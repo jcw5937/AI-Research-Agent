@@ -49,6 +49,12 @@ def _call_llm(system_prompt: str, user_prompt: str) -> str:
     return response.content
 
 
+def _normalize_arxiv_categories(raw) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return [str(cat).strip() for cat in raw if isinstance(cat, str) and str(cat).strip()]
+
+
 def _normalize_layer(layer: dict) -> dict:
     search_type = str(layer.get("search_type", "both")).strip().lower()
     if search_type not in VALID_SEARCH_TYPES:
@@ -57,6 +63,7 @@ def _normalize_layer(layer: dict) -> dict:
         "layer_name": layer.get("layer_name", "Untitled Layer"),
         "rationale": layer.get("rationale", ""),
         "search_type": search_type,
+        "arxiv_categories": _normalize_arxiv_categories(layer.get("arxiv_categories")),
     }
 
 
@@ -89,6 +96,7 @@ def input_node(state: dict) -> dict:
             "layer_name": name,
             "rationale": "User-provided layer.",
             "search_type": "both",
+            "arxiv_categories": [],
         }
         for name in layer_names
     ]
@@ -111,14 +119,20 @@ def generate_plan_node(state: dict) -> dict:
         "You are a research planning assistant. Given a research goal, produce a structured "
         "layered research plan. Each layer should represent a distinct knowledge area required "
         "to achieve the goal. For each layer specify: a name, a 2-3 sentence rationale explaining "
-        "why this layer is necessary, and a search_type (web, academic, or both) based on whether "
-        "the topic is practical/applied (web), theoretically grounded (academic), or both."
+        "why this layer is necessary, a search_type (web, academic, or both) based on whether "
+        "the topic is practical/applied (web), theoretically grounded (academic), or both, and "
+        "arxiv_categories: 1-3 valid arXiv category codes (e.g. cs.AI, cs.CL, cs.LG, cs.CV, "
+        "physics.optics, q-bio.NC, math.OC, econ.EM, stat.ML) that best scope THIS layer's actual "
+        "topic. Pick categories based on the layer's real subject matter, not any assumed domain "
+        "for the overall goal. If no category meaningfully scopes the layer, return an empty list "
+        "for arxiv_categories so the search stays unscoped."
     )
     user_prompt = (
         f"Goal: {state.get('goal', '')}\n\n"
         "Produce a research plan as a JSON array of layers. Each layer must be an object with "
         "keys: layer_name (string), rationale (string), search_type (\"web\", \"academic\", or "
-        "\"both\"). Return ONLY the JSON array, no prose, no code fences."
+        "\"both\"), arxiv_categories (array of 0-3 arXiv category code strings). Return ONLY the "
+        "JSON array, no prose, no code fences."
     )
 
     error_log = list(state.get("error_log", []))
@@ -165,13 +179,16 @@ def revise_plan_node(state: dict) -> dict:
     system_prompt = (
         "You are a research planning assistant. Revise the given research plan based on user "
         "feedback. Return the revised plan as JSON. Also return a change_log array of strings "
-        "explaining what you changed and why."
+        "explaining what you changed and why. Preserve each layer's arxiv_categories where still "
+        "appropriate, or regenerate them (1-3 valid arXiv category codes scoped to that layer's "
+        "actual topic, or an empty list if no category fits) if the layer's topic changed."
     )
     user_prompt = (
         f"Current plan:\n{json.dumps(state.get('plan', []), indent=2)}\n\n"
         f"User feedback:\n{state.get('feedback', '')}\n\n"
         "Return ONLY a JSON object of the form: "
-        '{"plan": [{"layer_name": str, "rationale": str, "search_type": "web"|"academic"|"both"}], '
+        '{"plan": [{"layer_name": str, "rationale": str, "search_type": "web"|"academic"|"both", '
+        '"arxiv_categories": [str, ...]}], '
         '"change_log": [str, ...]}. No prose, no code fences.'
     )
 
@@ -211,6 +228,36 @@ def _paper_from_web(item: dict, layer_name: str) -> dict:
         "peer_reviewed": False,
         "relevance": f"Found via web search for layer '{layer_name}'.",
     }
+
+
+def _is_relevant_paper(title: str, abstract: str, layer_name: str, rationale: str) -> bool:
+    """Ask the LLM whether a candidate paper is genuinely on-topic for a layer.
+
+    Category filtering only excludes wrong subject fields; this catches papers that
+    share vocabulary with the layer but are actually about something else. Lets
+    exceptions from the LLM call propagate so callers can fail open.
+    """
+    system_prompt = (
+        "You are a research relevance filter. Given a research layer's topic and rationale, "
+        "decide whether a candidate paper is genuinely relevant to that specific topic, as "
+        "opposed to merely sharing keywords or belonging to the same broad subject field."
+    )
+    user_prompt = (
+        f"Layer: {layer_name}\n"
+        f"Rationale: {rationale}\n\n"
+        f"Candidate paper title: {title}\n"
+        f"Candidate paper abstract: {abstract}\n\n"
+        "Is this paper genuinely relevant to the layer's topic? Return ONLY a JSON object of the "
+        'form {"relevant": true} or {"relevant": false}. No prose, no code fences.'
+    )
+    raw = _call_llm(system_prompt, user_prompt)
+    try:
+        parsed = parse_json_response(raw)
+        if isinstance(parsed, dict) and "relevant" in parsed:
+            return bool(parsed["relevant"])
+    except Exception:
+        pass
+    return _strip_code_fences(raw).strip().lower().startswith(("true", "yes"))
 
 
 def _paper_from_academic(item: dict, layer_name: str, error_log: list) -> dict:
@@ -257,11 +304,32 @@ def discover_papers_node(state: dict) -> dict:
                 found.append(_paper_from_web(item, layer_name))
 
         if search_type in ("academic", "both"):
-            academic_results = arxiv_search(query)
+            categories = layer.get("arxiv_categories", [])
+            academic_results = arxiv_search(query, categories=categories)
             for item in academic_results:
                 if item.get("error"):
                     error_log.append(f"discover_papers_node: {item['error']}")
                     continue
+
+                title = item.get("title", "Untitled")
+                try:
+                    relevant = _is_relevant_paper(
+                        title, item.get("abstract", ""), layer_name, layer.get("rationale", "")
+                    )
+                except Exception as exc:
+                    error_log.append(
+                        f"discover_papers_node: relevance check failed for '{title}' "
+                        f"(keeping paper): {exc}"
+                    )
+                    relevant = True
+
+                if not relevant:
+                    error_log.append(
+                        f"discover_papers_node: filtered out as not relevant to "
+                        f"layer '{layer_name}': '{title}'"
+                    )
+                    continue
+
                 found.append(_paper_from_academic(item, layer_name, error_log))
 
         papers[layer_name] = found

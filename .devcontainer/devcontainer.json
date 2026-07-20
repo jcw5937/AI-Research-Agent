@@ -2,7 +2,8 @@
     "name": "AI Research Agent",
     "image": "mcr.microsoft.com/devcontainers/python:3-3.14-trixie",
     "features": {
-        "ghcr.io/devcontainers/features/node:1": {
+        "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+        "ghcr.io/devcontainers/features/node:2.1.0": {
             "version": "20"
         }
     },

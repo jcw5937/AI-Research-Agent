@@ -1,13 +1,16 @@
 {
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
+      "Bash(xargs -I{} head -5 {})",
       "Bash(pip install *)",
       "Bash(python3 -c \"import langgraph; print\\(langgraph.__version__\\)\")",
       "Bash(pip show *)",
       "Bash(python3 -c \"from langgraph.checkpoint.sqlite import SqliteSaver; print\\('ok'\\)\")",
       "Bash(env)",
       "Bash(python3 -c \"import agent\")",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(git *)"
     ]
   }
 }
