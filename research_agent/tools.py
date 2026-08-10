@@ -200,9 +200,14 @@ def fetch_paper_text(url: str, max_words: int = 6000) -> str:
         return f"ERROR: fetch_paper_text failed for {url}: {exc}"
 
 
-def write_docx(layer_name: str, papers_notes: list[dict], output_dir: str) -> str:
+def write_docx(
+    layer_name: str,
+    papers_notes: list[dict],
+    output_dir: str,
+    note_sections: list[str] | None = None,
+) -> str:
     """Write a Word document of notes for one layer. Returns the output path."""
     try:
-        return build_layer_document(layer_name, papers_notes, output_dir)
+        return build_layer_document(layer_name, papers_notes, output_dir, note_sections)
     except Exception as exc:
         return f"ERROR: write_docx failed for {layer_name}: {exc}"

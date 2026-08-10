@@ -14,3 +14,7 @@ class AgentState(TypedDict):
     current_stage: str
     feedback: str
     error_log: list[str]
+    # Active project's config, set once at startup by the pre-graph project
+    # picker (see project.py) and read by generate_notes_node/write_documents_node.
+    note_sections: list[str]
+    output_dir: str

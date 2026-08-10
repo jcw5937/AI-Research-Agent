@@ -13,6 +13,9 @@ build/
 # Output files (generated notes)
 research_agent/output/
 
+# Per-project runtime data: registry, checkpoints, generated docs, vectorstores
+data/
+
 # Jupyter
 .ipynb_checkpoints/
 

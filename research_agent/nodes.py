@@ -11,6 +11,7 @@ from langchain_openai import ChatOpenAI  # noqa: F401 (kept available for the sw
 from langchain_core.messages import HumanMessage, SystemMessage
 
 import ui
+from project import DEFAULT_NOTE_SECTIONS
 from tools import arxiv_search, fetch_paper_text, semantic_scholar_lookup, tavily_search, write_docx
 
 # --- single model switch point -------------------------------------------------
@@ -19,15 +20,6 @@ model = ChatAnthropic(model="claude-sonnet-4-6")
 # ---------------------------------------------------------------------------
 
 VALID_SEARCH_TYPES = {"web", "academic", "both"}
-NOTE_SECTIONS = [
-    "Key Claims",
-    "Tools",
-    "Techniques",
-    "Limitations",
-    "Relevance to Cloud-Agnostic Agents",
-    "Ideas",
-    "Questions Raised",
-]
 
 
 def _strip_code_fences(text: str) -> str:
@@ -142,11 +134,11 @@ def generate_plan_node(state: dict) -> dict:
         plan = [_normalize_layer(layer) for layer in parsed]
     except Exception as exc:
         error_log.append(f"generate_plan_node: failed to parse plan JSON: {exc}")
-        plan = [{
+        plan = [_normalize_layer({
             "layer_name": "General Background",
             "rationale": "Fallback layer created because the planning LLM call failed to parse.",
             "search_type": "both",
-        }]
+        })]
 
     ui.show_plan(plan)
     return {"plan": plan, "current_stage": "planning", "error_log": error_log}
@@ -341,21 +333,67 @@ def discover_papers_node(state: dict) -> dict:
 
 # --- 6. paper_review_node ---------------------------------------------------------
 
+def _remove_paper_interactive(papers: dict) -> dict:
+    """Prompt for a layer then a paper index within it and drop that paper directly,
+    without going through revise_papers_node's LLM-based feedback parsing."""
+    layer_names = list(papers.keys())
+    if not layer_names:
+        print("No papers to remove.")
+        return papers
+
+    print("\nLayers:")
+    for i, name in enumerate(layer_names, start=1):
+        print(f"  [{i}] {name} ({len(papers[name])} paper(s))")
+
+    layer_choice = input("Layer number (blank to cancel): ").strip()
+    if not layer_choice:
+        return papers
+    if not layer_choice.isdigit() or not (1 <= int(layer_choice) <= len(layer_names)):
+        print("Invalid layer number.")
+        return papers
+
+    layer_name = layer_names[int(layer_choice) - 1]
+    layer_papers = papers[layer_name]
+    if not layer_papers:
+        print(f"No papers in layer '{layer_name}'.")
+        return papers
+
+    print(f"\nPapers in '{layer_name}':")
+    for i, paper in enumerate(layer_papers, start=1):
+        print(f"  [{i}] {paper.get('title', 'Untitled')}")
+
+    paper_choice = input("Paper number to remove (blank to cancel): ").strip()
+    if not paper_choice:
+        return papers
+    if not paper_choice.isdigit() or not (1 <= int(paper_choice) <= len(layer_papers)):
+        print("Invalid paper number.")
+        return papers
+
+    removed = layer_papers.pop(int(paper_choice) - 1)
+    print(f"Removed: {removed.get('title', 'Untitled')}")
+    return papers
+
+
 def paper_review_node(state: dict) -> dict:
+    papers = dict(state.get("papers", {}))
+
     while True:
         ui.show_paper_menu()
         choice = input("Choice: ").strip().lower()
 
         if choice == "f":
             feedback = input("Enter your feedback on the papers: ").strip()
-            return {"feedback": feedback, "current_stage": "paper_feedback"}
+            return {"papers": papers, "feedback": feedback, "current_stage": "paper_feedback"}
         if choice == "a":
-            return {"current_stage": "researching"}
+            return {"papers": papers, "current_stage": "researching"}
         if choice == "v":
-            ui.show_full_papers(state.get("papers", {}))
+            ui.show_full_papers(papers)
+            continue
+        if choice == "r":
+            papers = _remove_paper_interactive(papers)
             continue
 
-        print("Invalid choice. Please enter f, v, or a.")
+        print("Invalid choice. Please enter f, v, r, or a.")
 
 
 # --- 7. revise_papers_node ---------------------------------------------------------
@@ -401,20 +439,24 @@ def revise_papers_node(state: dict) -> dict:
 
 # --- 8. generate_notes_node -------------------------------------------------------
 
-def _parse_notes_sections(raw: str) -> dict:
+def _parse_notes_sections(raw: str, note_sections: list[str]) -> dict:
     parsed = parse_json_response(raw)
-    return {section: str(parsed.get(section, "")).strip() for section in NOTE_SECTIONS}
+    return {section: str(parsed.get(section, "")).strip() for section in note_sections}
 
 
 def generate_notes_node(state: dict) -> dict:
     goal = state.get("goal", "")
     notes = dict(state.get("notes", {}))
     error_log = list(state.get("error_log", []))
+    note_sections = state.get("note_sections") or DEFAULT_NOTE_SECTIONS
 
     system_prompt = (
         "You are a research assistant helping an AI engineer. Extract structured notes focused "
         f"on what is useful for the following goal: {goal}. Ignore content not relevant to this goal."
     )
+
+    section_list = ", ".join(note_sections)
+    section_keys = ", ".join(f'"{s}"' for s in note_sections)
 
     for layer_name, paper_list in state.get("papers", {}).items():
         layer_notes = []
@@ -430,22 +472,27 @@ def generate_notes_node(state: dict) -> dict:
 
             user_prompt = (
                 f"Paper title: {title}\n\nPaper text:\n{text}\n\n"
-                "Produce notes in exactly these 7 sections: Key Claims, Tools, Techniques, "
-                "Limitations, Relevance to Cloud-Agnostic Agents, Ideas, Questions Raised.\n\n"
-                "Return ONLY a JSON object whose keys are exactly: \"Key Claims\", \"Tools\", "
-                "\"Techniques\", \"Limitations\", \"Relevance to Cloud-Agnostic Agents\", \"Ideas\", "
-                "\"Questions Raised\". Each value is a string of notes for that section. "
-                "No prose, no code fences."
+                f"Produce notes in exactly these {len(note_sections)} sections: {section_list}.\n\n"
+                f"Return ONLY a JSON object whose keys are exactly: {section_keys}. "
+                "Each value is a string of notes for that section. No prose, no code fences."
             )
 
             try:
                 raw = _call_llm(system_prompt, user_prompt)
-                sections = _parse_notes_sections(raw)
+                sections = _parse_notes_sections(raw, note_sections)
             except Exception as exc:
                 error_log.append(f"generate_notes_node: failed to parse notes for '{title}': {exc}")
                 continue
 
-            layer_notes.append({"title": title, "sections": sections})
+            layer_notes.append({
+                "title": title,
+                "url": url,
+                "authors": paper.get("authors", ""),
+                "venue": paper.get("venue", ""),
+                "verified": paper.get("verified", False),
+                "peer_reviewed": paper.get("peer_reviewed", False),
+                "sections": sections,
+            })
             ui.show_notes_progress(layer_name, title)
 
         notes[layer_name] = layer_notes
@@ -456,13 +503,14 @@ def generate_notes_node(state: dict) -> dict:
 # --- 9. write_documents_node -------------------------------------------------------
 
 def write_documents_node(state: dict) -> dict:
-    output_dir = "research_agent/output/"
+    output_dir = state.get("output_dir") or "research_agent/output/"
+    note_sections = state.get("note_sections") or DEFAULT_NOTE_SECTIONS
     error_log = list(state.get("error_log", []))
 
     for layer_name, papers_notes in state.get("notes", {}).items():
         if not papers_notes:
             continue
-        path = write_docx(layer_name, papers_notes, output_dir)
+        path = write_docx(layer_name, papers_notes, output_dir, note_sections)
         if path.startswith("ERROR:"):
             error_log.append(f"write_documents_node: {path}")
             continue

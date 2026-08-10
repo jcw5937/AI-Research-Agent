@@ -10,6 +10,8 @@ def silence_ui(monkeypatch):
     monkeypatch.setattr(ui, "show_discovery_progress", lambda *a, **k: None)
     monkeypatch.setattr(ui, "show_papers", lambda *a, **k: None)
     monkeypatch.setattr(ui, "show_plan", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "show_plan_changes", lambda *a, **k: None)
+    monkeypatch.setattr(ui, "show_notes_progress", lambda *a, **k: None)
 
 
 @pytest.fixture(autouse=True)

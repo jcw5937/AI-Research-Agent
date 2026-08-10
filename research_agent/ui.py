@@ -11,6 +11,41 @@ def _print_rule(char: str = "-") -> None:
     print(_rule(char))
 
 
+def show_project_picker(projects: list) -> None:
+    print()
+    _print_rule("=")
+    print("PROJECTS")
+    _print_rule("=")
+    if not projects:
+        print("  (no existing projects yet)")
+    else:
+        for i, proj in enumerate(projects, start=1):
+            name = proj.get("display_name") or proj.get("project_slug", "Untitled")
+            print(f"  [{i}] {name}")
+            print(f"      goal:    {proj.get('goal') or '(not yet set)'}")
+            print(f"      created: {proj.get('created_at', '')}")
+    print("  [n] Start a new project")
+    _print_rule("=")
+
+
+def show_project_created(project_entry: dict) -> None:
+    print()
+    _print_rule("-")
+    name = project_entry.get("display_name", "")
+    slug = project_entry.get("project_slug", "")
+    print(f"Created project: {name} ({slug})")
+    print(f"  note sections: {', '.join(project_entry.get('note_sections', []))}")
+    _print_rule("-")
+
+
+def show_project_resuming(display_name: str) -> None:
+    print(f"\nResuming project '{display_name}' from its last checkpoint...")
+
+
+def show_project_new_pass(display_name: str) -> None:
+    print(f"\nProject '{display_name}' already completed a full run; starting a new pass.")
+
+
 def show_welcome() -> None:
     print()
     print("=" * WIDTH)
@@ -131,6 +166,7 @@ def show_paper_menu() -> None:
     print("PAPER REVIEW")
     print("  [f] Give feedback on papers")
     print("  [v] View full paper list")
+    print("  [r] Remove a specific paper")
     print("  [a] Approve papers -> begin research")
     _print_rule("-")
 
